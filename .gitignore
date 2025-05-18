@@ -1,0 +1,32 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Output
+*.db
+*.csv
+*.json
+
+# Virtual environments
+.venv
+
+# IDEs
+.idea
+.vscode
+
+# OS
+.DS_Store
+
+# Logs
+logs/
+*.log
+
+# Browser user profiles
+*profile/
+
+# Ignore dynaconf secret files
+.secrets.*

@@ -1,0 +1,16 @@
+[project]
+name = "novel-comment-crawler"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "beautifulsoup4>=4.13.4",
+    "dataclasses-json>=0.6.7",
+    "dynaconf>=3.2.11",
+    "httpx>=0.28.1",
+    "playwright>=1.52.0",
+    "python-dateutil>=2.9.0.post0",
+    "requests>=2.32.3",
+    "tqdm>=4.67.1",
+]
