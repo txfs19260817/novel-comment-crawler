@@ -27,3 +27,8 @@ search_keywords = [
     "文藝春秋文庫",
     "新文芸",
 ]
+
+[retry]
+retry_queue_size = 512
+max_retry_count = 3
+backoff_factor = 1

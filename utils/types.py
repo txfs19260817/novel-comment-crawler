@@ -187,24 +187,3 @@ class Book:
     page: int
     registration_count: int
     reviews: list[str]
-
-
-def new_book(id: int,
-             title: str,
-             author: str,
-             url: str,
-             published_at: datetime,
-             image_url: str,
-             page: int,
-             registration_count: int,
-             reviews: list[str]
-             ) -> Book:
-    return Book(id,
-                title,
-                author,
-                url,
-                published_at,
-                image_url,
-                page,
-                registration_count,
-                reviews)

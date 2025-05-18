@@ -6,15 +6,15 @@ from typing import Optional, Any
 
 from bs4 import BeautifulSoup, ResultSet, Tag
 from dateutil import parser
-from playwright.async_api import async_playwright, Page
+from playwright.async_api import async_playwright, Page, BrowserContext
 from tqdm.asyncio import tqdm as tqdm_async
 
 from utils.consts import search_url, URL, author_url, review_url
-from utils.helpers import keep_first_last_curly_brackets
+from utils.helpers import keep_first_last_curly_brackets, RetryQueue, RetryItem
 from utils.httpclient import HttpClientAsync
 from utils.logger import get_logger
 from utils.repository import BookRepository, SQLiteRepository
-from utils.types import Book, new_book, AuthorResponse, AuthorResource, ReviewListResponse, ReviewResource
+from utils.types import Book, AuthorResponse, AuthorResource, ReviewListResponse, ReviewResource
 
 logger = get_logger(__name__)
 
@@ -28,9 +28,15 @@ class BookmeterScraper:
             *,
             repo: Optional[BookRepository] = None,
     ):
+        self._running = False
         self._settings = settings
         self._repo = repo or SQLiteRepository(f"{self._settings.save_filename}.db")
         self._http = HttpClientAsync()
+        self._retry_queue = RetryQueue(
+            max_size=self._settings.retry.retry_queue_size,
+            max_retry_count=self._settings.retry.max_retry_count,
+            backoff_factor=self._settings.retry.backoff_factor,
+        )
 
     # --------------------------- Public API --------------------------- #
 
@@ -40,7 +46,7 @@ class BookmeterScraper:
         logger.info("Starting scrape for %d keyword(s)", len(self._settings.search_keywords))
         with self._repo:  # repo is synchronized context
             async with async_playwright() as p:
-                context = await p.chromium.launch_persistent_context(
+                context: BrowserContext = await p.chromium.launch_persistent_context(
                     user_data_dir=Path(self._settings.browser_user_data),
                     headless=False,
                 )
@@ -59,7 +65,12 @@ class BookmeterScraper:
                     for keyword in self._settings.search_keywords
                 ]
 
+                # —— 3) 等待所有任务完成 ——
+                self._running = True
+                retry_task = asyncio.create_task(self._retry_worker(context))
                 await asyncio.gather(*tasks)
+                self._running = False
+                await retry_task
                 await context.close()
         logger.info("Scraping finished!")
 
@@ -140,19 +151,53 @@ class BookmeterScraper:
                 if self._wanted_review(r)
             ]
         except Exception:
-            logger.exception("Failed to fetch review info for: " + html_raw)
+            logger.exception(f"Failed to fetch review info for: {html_raw} , enqueuing retry queue")
+            self._retry_queue.enqueue(RetryItem(author_resource.id, 0))
             return None
         return Book(
             id=author_resource.id,
             title=author_resource.title,
             author=author_resource.author.name,
             url=URL + author_resource.path,
-            published_at=parser.parse(author_resource.published_at or "1970-01-01T00:00:00.000+09:00").astimezone(timezone.utc),
+            published_at=parser.parse(author_resource.published_at or "1970-01-01T00:00:00.000+09:00").astimezone(
+                timezone.utc),
             image_url=author_resource.image_url,
             page=author_resource.page,
             registration_count=author_resource.registration_count,
             reviews=reviews,
         )
+
+    # ------------------------ Retry machinery ------------------------ #
+
+    async def _retry_worker(self, context: BrowserContext) -> None:
+        """后台重试失败 book_id，直到 _running=False 且队列清空。"""
+        while self._running:
+            if self._retry_queue.is_empty():
+                logger.info("Retry worker sleeps because retry queue is empty")
+                await asyncio.sleep(1)
+                continue
+
+            retry_item: RetryItem = self._retry_queue.dequeue()
+            book_id, attempt = retry_item.id, retry_item.attempts
+            logger.info("Retrying id=%s (attempt %s)...", book_id, attempt)
+            if attempt > 1:
+                await asyncio.sleep(self._retry_queue.backoff(attempt))
+            try:
+                page = await context.new_page()
+                if author_resp := await self._author(book_id, page):
+                    for res in author_resp.resources:
+                        book = await self._build_book(res, page)
+                        if self._wanted_book(book):
+                            self._repo.save(book)
+            except Exception:
+                if self._retry_queue.can_retry(attempt):
+                    # 失败后再次入队，attempt+1
+                    self._retry_queue.enqueue(RetryItem(book_id, attempt + 1))
+                    logger.warning("Retry %s failed for id=%s, will retry again (attempt %s)",
+                                   attempt, book_id, attempt + 1)
+                else:
+                    logger.error("Giving up id=%s after %s attempts", book_id, attempt)
+        logger.info(f"Retry worker finished, still has {len(self._retry_queue)} items in queue")
 
     # ----------------------------- Utils ----------------------------- #
 

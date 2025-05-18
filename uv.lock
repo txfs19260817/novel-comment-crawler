@@ -183,7 +183,7 @@ wheels = [
 ]
 
 [[package]]
-name = "novel-ratings-crawler"
+name = "novel-comment-crawler"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

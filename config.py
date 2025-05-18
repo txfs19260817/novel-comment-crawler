@@ -11,6 +11,9 @@ settings = Dynaconf(
         Validator("save_filename", cast=str, default="bookmeter_books"),
         Validator("max_workers", cast=int, gt=0, default=5),
         Validator("max_search_pages", cast=int, gt=0, default=15),
+        Validator("retry.retry_queue_size", cast=int, gt=0, default=512),
+        Validator("retry.max_retry_count", cast=int, gt=0, default=3),
+        Validator("retry.backoff_factor", cast=int, gt=0, default=1),
     ]
 )
 
