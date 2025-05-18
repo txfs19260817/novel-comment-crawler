@@ -26,3 +26,6 @@ def search_url(keyword: str, page: int = 1, partial: bool = False):
     encoded_keyword = quote(keyword)
     return f'{URL}/search?author=&keyword={encoded_keyword}&sort=release_date&type=japanese_v2&page={page}' + (
         '&partial=true' if partial else '')
+
+def external_stores_url(book_id: str | int):
+    return f'{URL}/api/v1/books/{book_id}/external_book_stores.json?'

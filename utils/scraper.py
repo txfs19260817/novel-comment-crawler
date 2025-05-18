@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 from datetime import timezone
 from pathlib import Path
 from typing import Optional, Any
@@ -9,12 +10,12 @@ from dateutil import parser
 from playwright.async_api import async_playwright, Page, BrowserContext
 from tqdm.asyncio import tqdm as tqdm_async
 
-from utils.consts import search_url, URL, author_url, review_url
+from utils.consts import search_url, URL, author_url, review_url, external_stores_url
 from utils.helpers import keep_first_last_curly_brackets, RetryQueue, RetryItem
 from utils.httpclient import HttpClientAsync
 from utils.logger import get_logger
 from utils.repository import BookRepository, SQLiteRepository
-from utils.types import Book, AuthorResponse, AuthorResource, ReviewListResponse, ReviewResource
+from utils.types import Book, AuthorResponse, AuthorResource, ReviewListResponse, ReviewResource, ExternalStores, Review
 
 logger = get_logger(__name__)
 
@@ -113,9 +114,12 @@ class BookmeterScraper:
                 if not author_resp:
                     continue
                 for res in author_resp.resources:
-                    book = await self._build_book(res, page)
+                    book: Optional[Book] = await self._build_book(res, page)
                     if self._wanted_book(book):
                         self._repo.save(book)
+                        if self._settings.amazon.enable:
+                            amazon_reviews: list[Review] = await self._amazon_reviews(book_id, page)
+                            self._repo.save_reviews(amazon_reviews)
 
     # ------------------------ Scraping helpers ------------------------ #
 
@@ -167,6 +171,73 @@ class BookmeterScraper:
             reviews=reviews,
         )
 
+    async def _amazon_reviews(self, book_id: int, page: Page) -> list[Review]:
+        """
+        抓取 Amazon.co.jp 的评论：
+        1) 用 Bookmeter API 找到商品页 URL
+        2) 在商品页查找 data-hook="see-all-reviews-link-foot" 的链接
+        3) 跳转到完整评论页后，循环翻页抓取每条评论的 标题/星级/正文
+        4) 返回 ["<标题> <星数> <正文>", ...]
+        """
+        try:
+            # 1) 取外部店铺列表
+            json_dict = await self._http.get_json(external_stores_url(book_id))
+            stores: ExternalStores = ExternalStores.from_dict(json_dict)
+            if not stores or not stores.resources:
+                return []
+            amazon_url = next((r.url for r in stores.resources if r.alphabet_name.lower() == "amazon"), None)
+            if not amazon_url:
+                return []
+
+            # 2) 打开商品页，找“レビューをすべて見る”链接
+            await page.goto(amazon_url, wait_until="domcontentloaded")
+            see_all = await page.query_selector('a[data-hook="see-all-reviews-link-foot"]')
+            if not see_all:
+                return []
+
+            href = await see_all.get_attribute("href")
+            if not "product-reviews" in href:
+                return []
+            # 有时候 href 是相对路径
+            reviews_url = href if href.startswith("http") else f"https://www.amazon.co.jp{href}"
+
+            reviews: list[Review] = []
+            # 3) 循环翻页抓
+            for pno in range(1, self._settings.amazon.max_review_pages + 1):
+                # 如果 reviews_url 自带 pageNumber 参数，也可以直接替换或拼接
+                url = reviews_url
+                if "pageNumber=" in url:
+                    url = re.sub(r"pageNumber=\d+", f"pageNumber={pno}", url)
+                else:
+                    url = f"{url}{"&" if "?" in url else "?"}pageNumber={pno}"
+
+                html = await self._get_html(page, url)
+                soup = BeautifulSoup(html, "html.parser")
+                blocks: list[Tag] = soup.select('li[data-hook="review"]') or []
+
+                for b in blocks:
+                    title = b.select_one('a[data-hook="review-title"]')
+                    body = b.select_one('span[data-hook="review-body"]')
+
+                    parts = []
+                    if title and title.text.strip():
+                        parts.append(title.text.strip())
+                    if body and body.text.strip():
+                        parts.append(body.text.strip())
+
+                    line = " ".join(parts)
+                    if len(line) > 10:
+                        reviews.append(Review(book_id, line, "amazon"))
+
+                if len(blocks) < 10:
+                    break
+
+            return reviews
+
+        except Exception:
+            logger.exception("Failed to fetch Amazon reviews for %d", book_id)
+            return []
+
     # ------------------------ Retry machinery ------------------------ #
 
     async def _retry_worker(self, context: BrowserContext) -> None:
@@ -174,7 +245,7 @@ class BookmeterScraper:
         while self._running:
             if self._retry_queue.is_empty():
                 logger.info("Retry worker sleeps because retry queue is empty")
-                await asyncio.sleep(1)
+                await asyncio.sleep(5)
                 continue
 
             retry_item: RetryItem = self._retry_queue.dequeue()
@@ -224,7 +295,7 @@ class BookmeterScraper:
 
     @staticmethod
     async def _get_html(page: Page, url: str) -> str:
-        response = await page.goto(url, wait_until="networkidle")
+        response = await page.goto(url, wait_until="networkidle", timeout=60 * 1000)
         if response and response.status >= 400:
             raise RuntimeError(f"Bad status {response.status} for {url}")
         await page.evaluate("window.scrollTo(0, document.body.scrollHeight);")

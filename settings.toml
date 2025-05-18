@@ -32,3 +32,7 @@ search_keywords = [
 retry_queue_size = 512
 max_retry_count = 3
 backoff_factor = 1
+
+[amazon]
+enable = false
+max_review_pages = 5

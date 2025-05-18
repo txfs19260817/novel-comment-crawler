@@ -23,6 +23,12 @@ class BookRepository(Protocol):
     @abstractmethod  # type: ignore[misc]
     def save(self, book: Book, source: str = "") -> None: ...
 
+    @abstractmethod  # type: ignore[misc]
+    def save_book(self, book: Book) -> None: ...
+
+    @abstractmethod  # type: ignore[misc]
+    def save_reviews(self, reviews: list[Review]) -> None: ...
+
 
 class SQLiteRepository:
     """Thread‑safe SQLite implementation (books + book_reviews)."""

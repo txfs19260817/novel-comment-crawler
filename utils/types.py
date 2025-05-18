@@ -168,6 +168,24 @@ class AuthorResponse:
     resources: List[AuthorResource]
 
 
+# ---------- External Stores ----------
+@dataclass_json
+@dataclass
+class ExternalStoreResource:
+    id: int
+    book_id: int
+    url: str
+    alphabet_name: str = ""
+    official_name: str = ""
+    image_path: str = ""
+
+
+@dataclass_json
+@dataclass
+class ExternalStores:
+    resources: List[ExternalStoreResource] = ()
+
+
 # ---------- Book ----------
 @dataclass
 class Review:
