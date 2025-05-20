@@ -55,6 +55,9 @@ unwanted_title_keywords = [
 
     # Manga
     "MANGA",
+
+    "週刊 ",
+    "月刊 ",
 ]
 [retry]
 retry_queue_size = 512
