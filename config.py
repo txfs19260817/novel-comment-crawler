@@ -9,6 +9,7 @@ settings = Dynaconf(
         Validator("browser_user_data", must_exist=True, cast=str),
         Validator("headless", cast=bool, default=True),
         Validator("search_keywords", must_exist=True, cast=list, len_min=1),
+        Validator("unwanted_title_keywords", cast=list, default=[]),
         Validator("save_filename", cast=str, default="bookmeter_books"),
         Validator("skip_existing", cast=bool, default=False),
         Validator("max_workers", cast=int, gt=0, default=5),

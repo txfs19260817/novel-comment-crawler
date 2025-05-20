@@ -4,7 +4,7 @@ import re
 from datetime import timezone
 from pathlib import Path
 from random import shuffle
-from typing import Optional, Any
+from typing import Optional, Any, Union
 
 from bs4 import BeautifulSoup, ResultSet, Tag
 from dateutil import parser
@@ -128,7 +128,7 @@ class BookmeterScraper:
                         if self._settings.amazon.enable:
                             amazon_reviews: list[Review] = await self._amazon_reviews(book_id, page)
                             self._repo.save_reviews(amazon_reviews)
-                        logger.info(f"Saved book: {book}")
+                        logger.info(f"Saved book: [{book_id}] {book.title}")
 
     # ------------------------ Scraping helpers ------------------------ #
 
@@ -270,9 +270,9 @@ class BookmeterScraper:
                 if author_resp := await self._author(book_id, page):
                     for res in author_resp.resources:
                         book = await self._build_book(res, page)
-                        if self._wanted_book(book):
+                        if self._wanted_book(book, self._settings.unwanted_title_keywords):
                             self._repo.save(book)
-                            retry_logger.info(f"Retrying id={book_id} succeeded (attempt {attempt})")
+                            retry_logger.info(f"Retrying [{book_id}] {book.title} succeeded (attempt {attempt})")
             except Exception:
                 if self._retry_queue.can_retry(attempt):
                     self._retry_queue.enqueue(RetryItem(book_id, attempt + 1))
@@ -298,8 +298,8 @@ class BookmeterScraper:
                 raise RuntimeError(f"Both Playwright and HttpClient failed for {url}") from httpx_e
 
     @staticmethod
-    def _wanted_book(book: Optional[Book]) -> bool:
-        return bool(book and book.reviews and "コミック" not in book.title)
+    def _wanted_book(book: Optional[Book], unwanted_title_keywords: Union[list[str], tuple[str, ...]] = ()) -> bool:
+        return bool(book and book.reviews and not any(keyword in book.title for keyword in unwanted_title_keywords))
 
     @staticmethod
     def _wanted_review(review: Optional[ReviewResource]) -> bool:

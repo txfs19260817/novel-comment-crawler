@@ -46,7 +46,16 @@ search_keywords = [
     "青春",
     "恋愛",
 ]
+unwanted_title_keywords = [
+    # Comic
+    "コミック",
+    "COMIC",
+    "コミクス",
+    "コミカライズ",
 
+    # Manga
+    "MANGA",
+]
 [retry]
 retry_queue_size = 512
 max_retry_count = 3
