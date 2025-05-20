@@ -1,6 +1,7 @@
 browser_user_data = "./chrome_profile"
 headless = true
 save_filename = "bookmeter_books"
+skip_existing = true
 max_search_pages = 30
 max_workers = 5
 search_keywords = [

@@ -10,6 +10,7 @@ settings = Dynaconf(
         Validator("headless", cast=bool, default=True),
         Validator("search_keywords", must_exist=True, cast=list, len_min=1),
         Validator("save_filename", cast=str, default="bookmeter_books"),
+        Validator("skip_existing", cast=bool, default=False),
         Validator("max_workers", cast=int, gt=0, default=5),
         Validator("max_search_pages", cast=int, gt=0, default=15),
         Validator("amazon.enable", cast=bool, default=False),

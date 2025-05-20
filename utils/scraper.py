@@ -53,7 +53,7 @@ class BookmeterScraper:
                 context: BrowserContext = await p.chromium.launch_persistent_context(
                     user_data_dir=Path(self._settings.browser_user_data),
                     headless=self._settings.headless,
-                    args=PLAYWRIGHT_ARGS,
+                    args=PLAYWRIGHT_ARGS if self._settings.headless else [],
                 )
 
                 # —— 1) Login to share cookies between tabs ——
@@ -98,8 +98,7 @@ class BookmeterScraper:
             logger.info("Logged in!")
 
     async def _keyword_worker(self, keyword: str, context, semaphore: asyncio.Semaphore) -> None:
-        """为单个关键字开新 tab，抓完即关。"""
-        async with semaphore:  # 控制并发
+        async with semaphore:
             logger.info(f"Keyword {keyword} started...")
             page = await context.new_page()
             try:
@@ -116,6 +115,9 @@ class BookmeterScraper:
         ):
             book_ids = await self._search_ids(keyword, page_no, page)
             for book_id in book_ids:
+                if self._settings.skip_existing and self._repo.exists(book_id):
+                    logger.info(f"Skipping existing book: {book_id}")
+                    continue
                 author_resp = await self._author(book_id, page)
                 if not author_resp:
                     continue
