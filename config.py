@@ -7,6 +7,7 @@ settings = Dynaconf(
         Validator("email", must_exist=True, cast=str, condition=lambda x: isinstance(x, str) and x.count("@") == 1),
         Validator("password", must_exist=True, cast=str, len_min=8),
         Validator("browser_user_data", must_exist=True, cast=str),
+        Validator("headless", cast=bool, default=True),
         Validator("search_keywords", must_exist=True, cast=list, len_min=1),
         Validator("save_filename", cast=str, default="bookmeter_books"),
         Validator("max_workers", cast=int, gt=0, default=5),

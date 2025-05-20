@@ -12,7 +12,15 @@ HEADERS = {
     "Referer": "https://www.google.com",
     "Cache-Control": "max-age=0",
 }
-
+PLAYWRIGHT_ARGS = [
+    "--js-flags=--max_old_space_size=512",
+    "--disable-dev-shm-usage",
+    "--disable-gpu",
+    "--no-sandbox",
+    "--disable-software-rasterizer",
+    "--mute-audio",
+    "--blink-settings=imagesEnabled=false",  # Don't load images
+]
 
 def author_url(book_id: str | int, limit: int = 8):
     return f'{URL}/api/v1/books/{book_id}/related_books/author?limit={limit}'
@@ -22,7 +30,7 @@ def review_url(book_id: str | int, offset: int = 0, limit: int = 100):
     return f'{URL}/books/{book_id}/reviews.json?offset={offset}&limit={limit}'
 
 
-def search_url(keyword: str, page: int = 1, partial: bool = False):
+def search_url(keyword: str, page: int = 1, partial: bool = True):
     encoded_keyword = quote(keyword)
     return f'{URL}/search?author=&keyword={encoded_keyword}&sort=release_date&type=japanese_v2&page={page}' + (
         '&partial=true' if partial else '')

@@ -3,6 +3,7 @@ import json
 import re
 from datetime import timezone
 from pathlib import Path
+from random import shuffle
 from typing import Optional, Any
 
 from bs4 import BeautifulSoup, ResultSet, Tag
@@ -10,7 +11,7 @@ from dateutil import parser
 from playwright.async_api import async_playwright, Page, BrowserContext
 from tqdm.asyncio import tqdm as tqdm_async
 
-from utils.consts import search_url, URL, author_url, review_url, external_stores_url
+from utils.consts import search_url, URL, author_url, review_url, external_stores_url, PLAYWRIGHT_ARGS
 from utils.helpers import keep_first_last_curly_brackets, RetryQueue, RetryItem
 from utils.httpclient import HttpClientAsync
 from utils.logger import get_logger
@@ -44,31 +45,36 @@ class BookmeterScraper:
     async def run(self) -> None:
         """Run the scraper asynchronously."""
 
-        logger.info("Starting scrape for %d keyword(s)", len(self._settings.search_keywords))
+        search_keywords = self._settings.search_keywords
+        shuffle(search_keywords)
+        logger.info("Starting scrape for keyword(s): %s", search_keywords)
         with self._repo:  # repo is synchronized context
             async with async_playwright() as p:
                 context: BrowserContext = await p.chromium.launch_persistent_context(
                     user_data_dir=Path(self._settings.browser_user_data),
-                    headless=False,
+                    headless=self._settings.headless,
+                    args=PLAYWRIGHT_ARGS,
                 )
 
-                # —— 1) 先登入一次，cookie 会在整个 context 里共享 ——
+                # —— 1) Login to share cookies between tabs ——
                 first_tab: Page = await context.new_page()
                 await self._login(first_tab)
                 await first_tab.close()
 
-                # —— 2) 创建并发任务，每关键字一个 tab ——
+                # —— 2) Start async keyword workers controlled by semaphore ——
                 semaphore = asyncio.Semaphore(self._settings.max_workers)
                 tasks = [
                     asyncio.create_task(
                         self._keyword_worker(keyword, context, semaphore)
                     )
-                    for keyword in self._settings.search_keywords
+                    for keyword in search_keywords
                 ]
 
-                # —— 3) 等待所有任务完成 ——
+                # —— 3) Start a retrying task ——
                 self._running = True
                 retry_task = asyncio.create_task(self._retry_worker(context))
+
+                # —— 4) Wait for all tasks to finish ——
                 await asyncio.gather(*tasks)
                 self._running = False
                 await retry_task
@@ -120,6 +126,7 @@ class BookmeterScraper:
                         if self._settings.amazon.enable:
                             amazon_reviews: list[Review] = await self._amazon_reviews(book_id, page)
                             self._repo.save_reviews(amazon_reviews)
+                        logger.info(f"Saved book: {book}")
 
     # ------------------------ Scraping helpers ------------------------ #
 
@@ -241,34 +248,37 @@ class BookmeterScraper:
     # ------------------------ Retry machinery ------------------------ #
 
     async def _retry_worker(self, context: BrowserContext) -> None:
-        """后台重试失败 book_id，直到 _running=False 且队列清空。"""
+        """Retry worker runs in the background, retrying failed tasks until the program exits."""
+        retry_logger = get_logger(__name__ + ".retry_worker")
         while self._running:
             if self._retry_queue.is_empty():
-                logger.info("Retry worker sleeps because retry queue is empty")
+                retry_logger.info("Retry worker sleeps because retry queue is empty")
                 await asyncio.sleep(5)
                 continue
 
             retry_item: RetryItem = self._retry_queue.dequeue()
             book_id, attempt = retry_item.id, retry_item.attempts
-            logger.info("Retrying id=%s (attempt %s)...", book_id, attempt)
+            backoff: int = self._retry_queue.backoff(attempt)
             if attempt > 1:
-                await asyncio.sleep(self._retry_queue.backoff(attempt))
+                retry_logger.warning("Will retry id=%s (attempt %s) after %d s...", book_id, attempt, backoff)
+                await asyncio.sleep(backoff)
             try:
+                retry_logger.info(f"Retrying id={book_id} (attempt {attempt})")
                 page = await context.new_page()
                 if author_resp := await self._author(book_id, page):
                     for res in author_resp.resources:
                         book = await self._build_book(res, page)
                         if self._wanted_book(book):
                             self._repo.save(book)
+                            retry_logger.info(f"Retrying id={book_id} succeeded (attempt {attempt})")
             except Exception:
                 if self._retry_queue.can_retry(attempt):
-                    # 失败后再次入队，attempt+1
                     self._retry_queue.enqueue(RetryItem(book_id, attempt + 1))
-                    logger.warning("Retry %s failed for id=%s, will retry again (attempt %s)",
+                    retry_logger.warning("Retry %s failed for id=%s, will retry again (attempt %s)",
                                    attempt, book_id, attempt + 1)
                 else:
-                    logger.error("Giving up id=%s after %s attempts", book_id, attempt)
-        logger.info(f"Retry worker finished, still has {len(self._retry_queue)} items in queue")
+                    retry_logger.error("Giving up id=%s after %s attempts", book_id, attempt)
+        retry_logger.info(f"Retry worker finished, still has {len(self._retry_queue)} items in queue")
 
     # ----------------------------- Utils ----------------------------- #
 
